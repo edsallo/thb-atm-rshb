@@ -162,10 +162,14 @@ function calculate(card, withdrawalThb, rates) {
   const baseInAccountCurrency = card === "cny" ? settlementCny : settlementCny * rshb.sellCnyRub;
   const rshbCashFee = Math.max(baseInAccountCurrency * fee.percent, fee.minimum);
   const totalDebit = baseInAccountCurrency + rshbCashFee;
+  const rublesToBuyCny = card === "cny" ? totalDebit * rshb.sellCnyRub : null;
   const cardName = card === "rub" ? "Рублёвая карта РСХБ" : "Юаневая карта РСХБ";
   const accountCurrency = fee.currency;
   const convertedLine = card === "rub"
     ? `💱 Курс РСХБ\n1 CNY = ${formatRate(rshb.sellCnyRub)} RUB\n\n💳 До комиссии\n${format(baseInAccountCurrency, "RUB")}\n\n`
+    : "";
+  const rubPurchaseLine = card === "cny"
+    ? `\n\n💴 Купить ${format(totalDebit, "CNY")}\nпо курсу РСХБ\n${format(rublesToBuyCny, "RUB")}`
     : "";
   const yesterdayWarning = unionPay.yesterday ? "⚠ Используется вчерашний курс UnionPay\n\n" : "";
   const title = "🇹🇭 THB ATM RSHB";
@@ -183,7 +187,8 @@ function calculate(card, withdrawalThb, rates) {
 convertedLine +
 `🏦 Комиссия РСХБ\n${format(rshbCashFee, accountCurrency)} (${fee.percent * 100}%, мин. ${format(fee.minimum, accountCurrency)})\n\n` +
 `════════════════════\n\n` +
-`💸 Итого\n${format(totalDebit, accountCurrency)}`;
+`💸 Итого\n${format(totalDebit, accountCurrency)}` +
+rubPurchaseLine;
   return {
     title: title,
     body: body,
@@ -194,7 +199,7 @@ convertedLine +
       thaiAtmFeeThb: SETTINGS.THAI_ATM_FEE_THB,
       totalAtmDebitThb: totalThb,
       unionPay: { thbCny: unionPay.thbCny, settlementCny: settlementCny, settlementDate: unionPay.settlementDate, cache: rates.unionPay.source },
-      rshb: { cardCnyRubSell: rshb.sellCnyRub, cashWithdrawalFee: rshbCashFee, cache: rates.rshb.source },
+      rshb: { cardCnyRubSell: rshb.sellCnyRub, cashWithdrawalFee: rshbCashFee, rublesToBuyCny: rublesToBuyCny, cache: rates.rshb.source },
       totalDebit: totalDebit,
       totalDebitCurrency: accountCurrency,
       generatedAt: new Date().toISOString(),
@@ -211,7 +216,8 @@ function buildWidget(result) {
   title.textColor = Color.white();
   widget.addSpacer(7);
   const bodyLines = result.body.split("\n");
-  const total = widget.addText(bodyLines.find((line) => line === "💸 Итого") ? bodyLines[bodyLines.length - 1] : "");
+  const totalIndex = bodyLines.indexOf("💸 Итого");
+  const total = widget.addText(totalIndex >= 0 ? bodyLines[totalIndex + 1] : "");
   total.font = Font.boldSystemFont(16);
   total.textColor = new Color("D5F2D4");
   widget.addSpacer(5);

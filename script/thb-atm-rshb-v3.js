@@ -10,9 +10,10 @@ const SETTINGS = {
   UNIONPAY_CACHE_MS: 6 * 60 * 60 * 1000,
   RSHB_CACHE_MS: 15 * 60 * 1000,
   MAX_STALE_MS: 7 * 24 * 60 * 60 * 1000,
-  CACHE_FILE: "thb-atm-rshb-v3-thailand-cardrates-cache.json",
+  CACHE_FILE: "thb-atm-rshb-v4-thailand-cache.json",
   UNIONPAY_DAILY_URL: "https://www.unionpayintl.com/upload/jfimg",
-  RSHB_CARD_RATES_URL: "https://old.rshb.ru/natural/cards/rates/rates_offline/",
+  RSHB_FOREIGN_CARD_RATES_URL: "https://old.rshb.ru/natural/cards/rates/rates_offline/",
+  RSHB_APP_RATES_URL: "https://www.rshb.ru/api/v1/ratescards",
   FEES: {
     rub: { percent: 0.015, minimum: 250, currency: "RUB" },
     cny: { percent: 0.04, minimum: 70, currency: "CNY" },
@@ -45,7 +46,7 @@ async function main() {
   }
 
   try {
-    const rates = await loadRates(input.refresh);
+    const rates = await loadRates(input.refresh, card);
     const result = calculate(card, withdrawalThb, rates);
     if (config.runsInWidget) {
       Script.setWidget(buildWidget(result));
@@ -98,14 +99,17 @@ async function askWithdrawalAmount() {
   return choice === -1 ? null : asNumber(alert.textFieldValue(0));
 }
 
-async function loadRates(forceRefresh) {
+async function loadRates(forceRefresh, card) {
   const cache = readCache();
-  const [unionPay, rshb] = await Promise.all([
+  const [unionPay, rshbForeign, rshbApp] = await Promise.all([
     resolveSource("UnionPay", cache.unionPay, SETTINGS.UNIONPAY_CACHE_MS, forceRefresh, fetchUnionPayThbCny),
-    resolveSource("РСХБ", cache.rshb, SETTINGS.RSHB_CACHE_MS, forceRefresh, fetchRshbCardRate),
+    resolveSource("РСХБ: снятие за рубежом", cache.rshbForeign, SETTINGS.RSHB_CACHE_MS, forceRefresh, fetchRshbForeignCardRate),
+    card === "cny"
+      ? resolveSource("РСХБ: покупка CNY", cache.rshbApp, SETTINGS.RSHB_CACHE_MS, forceRefresh, fetchRshbAppCnyRate)
+      : Promise.resolve(null),
   ]);
-  writeCache({ version: 3, unionPay: unionPay.entry, rshb: rshb.entry });
-  return { unionPay: unionPay, rshb: rshb };
+  writeCache({ version: 4, unionPay: unionPay.entry, rshbForeign: rshbForeign.entry, rshbApp: rshbApp?.entry || cache.rshbApp });
+  return { unionPay: unionPay, rshbForeign: rshbForeign, rshbApp: rshbApp };
 }
 
 async function resolveSource(name, cached, ttl, forceRefresh, loader) {
@@ -141,7 +145,7 @@ async function fetchUnionPayThbCny() {
   throw new Error(lastError);
 }
 
-async function fetchRshbCardRate() {
+async function fetchRshbForeignCardRate() {
   // This archive is the bank's published rate specifically for card
   // operations performed outside the RSHB network, including foreign ATMs.
   let lastError = "РСХБ не вернул карточный курс CNY/RUR";
@@ -150,7 +154,7 @@ async function fetchRshbCardRate() {
     date.setDate(date.getDate() - offset);
     const dateText = formatRshbDate(date);
     try {
-      const request = new Request(`${SETTINGS.RSHB_CARD_RATES_URL}?date_from=${encodeURIComponent(dateText)}&date_to=${encodeURIComponent(dateText)}`);
+      const request = new Request(`${SETTINGS.RSHB_FOREIGN_CARD_RATES_URL}?date_from=${encodeURIComponent(dateText)}&date_to=${encodeURIComponent(dateText)}`);
       request.headers = { Accept: "text/html" };
       request.timeoutInterval = 20;
       const html = await request.loadString();
@@ -164,23 +168,36 @@ async function fetchRshbCardRate() {
   throw new Error(lastError);
 }
 
+async function fetchRshbAppCnyRate() {
+  const request = new Request(SETTINGS.RSHB_APP_RATES_URL);
+  request.headers = { Accept: "application/json" };
+  request.timeoutInterval = 20;
+  const payload = JSON.parse(await request.loadString());
+  const rows = Array.isArray(payload?.[0]) ? payload[0] : Array.isArray(payload) ? payload : [];
+  const cny = rows.find((item) => String(item.currencyPair || "").startsWith("CNY/RUB"));
+  const sellCnyRub = asNumber(cny?.sellRate);
+  if (!(sellCnyRub > 0)) throw new Error("не удалось получить курс покупки CNY");
+  return { sellCnyRub: sellCnyRub, updatedAt: cny.lastUpdatedAt || null };
+}
+
 function calculate(card, withdrawalThb, rates) {
   const unionPay = rates.unionPay.entry.value;
-  const rshb = rates.rshb.entry.value;
+  const rshbForeign = rates.rshbForeign.entry.value;
+  const rshbApp = rates.rshbApp?.entry.value;
   const totalThb = withdrawalThb + SETTINGS.THAI_ATM_FEE_THB;
   const settlementCny = totalThb * unionPay.thbCny;
   const fee = SETTINGS.FEES[card];
-  const baseInAccountCurrency = card === "cny" ? settlementCny : settlementCny * rshb.sellCnyRub;
+  const baseInAccountCurrency = card === "cny" ? settlementCny : settlementCny * rshbForeign.sellCnyRub;
   const rshbCashFee = Math.max(baseInAccountCurrency * fee.percent, fee.minimum);
   const totalDebit = baseInAccountCurrency + rshbCashFee;
-  const rublesToBuyCny = card === "cny" ? totalDebit * rshb.sellCnyRub : null;
+  const rublesToBuyCny = card === "cny" ? totalDebit * rshbApp.sellCnyRub : null;
   const cardName = card === "rub" ? "Рублёвая карта РСХБ" : "Юаневая карта РСХБ";
   const accountCurrency = fee.currency;
   const convertedLine = card === "rub"
-    ? `💱 Курс РСХБ\n1 CNY = ${formatRate(rshb.sellCnyRub)} RUB\n\n💳 До комиссии\n${format(baseInAccountCurrency, "RUB")}\n\n`
+    ? `💱 РСХБ: снятие за рубежом\n1 CNY = ${formatRate(rshbForeign.sellCnyRub)} RUB\n\n💳 До комиссии\n${format(baseInAccountCurrency, "RUB")}\n\n`
     : "";
   const rubPurchaseLine = card === "cny"
-    ? `\n\n💴 Купить ${format(totalDebit, "CNY")}\nпо курсу РСХБ\n${format(rublesToBuyCny, "RUB")}`
+    ? `\n\n💴 Купить ${format(totalDebit, "CNY")}\nв приложении РСХБ\n1 CNY = ${formatRate(rshbApp.sellCnyRub)} RUB\n${format(rublesToBuyCny, "RUB")}`
     : "";
   const yesterdayWarning = unionPay.yesterday ? "⚠ Используется вчерашний курс UnionPay\n\n" : "";
   const title = "🇹🇭 THB ATM RSHB";
@@ -210,7 +227,14 @@ rubPurchaseLine;
       thaiAtmFeeThb: SETTINGS.THAI_ATM_FEE_THB,
       totalAtmDebitThb: totalThb,
       unionPay: { thbCny: unionPay.thbCny, settlementCny: settlementCny, settlementDate: unionPay.settlementDate, cache: rates.unionPay.source },
-      rshb: { cardCnyRubSell: rshb.sellCnyRub, cashWithdrawalFee: rshbCashFee, rublesToBuyCny: rublesToBuyCny, cache: rates.rshb.source },
+      rshb: {
+        foreignCardCnyRubSell: rshbForeign.sellCnyRub,
+        appCnyRubSell: rshbApp?.sellCnyRub || null,
+        cashWithdrawalFee: rshbCashFee,
+        rublesToBuyCny: rublesToBuyCny,
+        foreignCardCache: rates.rshbForeign.source,
+        appRateCache: rates.rshbApp?.source || null,
+      },
       totalDebit: totalDebit,
       totalDebitCurrency: accountCurrency,
       generatedAt: new Date().toISOString(),

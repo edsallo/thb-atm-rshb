@@ -10,9 +10,9 @@ const SETTINGS = {
   UNIONPAY_CACHE_MS: 6 * 60 * 60 * 1000,
   RSHB_CACHE_MS: 15 * 60 * 1000,
   MAX_STALE_MS: 7 * 24 * 60 * 60 * 1000,
-  CACHE_FILE: "thb-atm-rshb-v3-thailand-cache.json",
+  CACHE_FILE: "thb-atm-rshb-v3-thailand-cardrates-cache.json",
   UNIONPAY_DAILY_URL: "https://www.unionpayintl.com/upload/jfimg",
-  RSHB_CARD_RATES_URL: "https://www.rshb.ru/api/v1/ratescards",
+  RSHB_CARD_RATES_URL: "https://old.rshb.ru/natural/cards/rates/rates_offline/",
   FEES: {
     rub: { percent: 0.015, minimum: 250, currency: "RUB" },
     cny: { percent: 0.04, minimum: 70, currency: "CNY" },
@@ -142,15 +142,26 @@ async function fetchUnionPayThbCny() {
 }
 
 async function fetchRshbCardRate() {
-  const request = new Request(SETTINGS.RSHB_CARD_RATES_URL);
-  request.headers = { Accept: "application/json" };
-  request.timeoutInterval = 20;
-  const payload = JSON.parse(await request.loadString());
-  const rows = Array.isArray(payload?.[0]) ? payload[0] : Array.isArray(payload) ? payload : [];
-  const cny = rows.find((item) => String(item.currencyPair || "").startsWith("CNY/RUB"));
-  const sellCnyRub = asNumber(cny?.sellRate);
-  if (!(sellCnyRub > 0)) throw new Error("в карточном API РСХБ нет курса CNY/RUB");
-  return { sellCnyRub: sellCnyRub, updatedAt: cny.lastUpdatedAt || null };
+  // This archive is the bank's published rate specifically for card
+  // operations performed outside the RSHB network, including foreign ATMs.
+  let lastError = "РСХБ не вернул карточный курс CNY/RUR";
+  for (let offset = 0; offset < 8; offset++) {
+    const date = new Date();
+    date.setDate(date.getDate() - offset);
+    const dateText = formatRshbDate(date);
+    try {
+      const request = new Request(`${SETTINGS.RSHB_CARD_RATES_URL}?date_from=${encodeURIComponent(dateText)}&date_to=${encodeURIComponent(dateText)}`);
+      request.headers = { Accept: "text/html" };
+      request.timeoutInterval = 20;
+      const html = await request.loadString();
+      const match = html.match(/<td>\s*CNY\/(?:RUR|RUB)\s*<\/td>\s*<td>\s*([^<]+?)\s*<\/td>\s*<td>\s*([^<]+?)\s*<\/td>/i);
+      const sellCnyRub = asNumber(match?.[2]);
+      if (sellCnyRub > 0) return { sellCnyRub: sellCnyRub, updatedAt: dateText, yesterday: offset === 1 };
+    } catch (error) {
+      lastError = error.message || String(error);
+    }
+  }
+  throw new Error(lastError);
 }
 
 function calculate(card, withdrawalThb, rates) {
@@ -294,4 +305,8 @@ function toCompactDate(date) {
 function formatCompactDate(value) {
   const date = String(value || "");
   return /^\d{8}$/.test(date) ? `${date.slice(6, 8)}.${date.slice(4, 6)}.${date.slice(0, 4)}` : date;
+}
+
+function formatRshbDate(date) {
+  return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
 }

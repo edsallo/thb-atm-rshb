@@ -55,7 +55,7 @@ async function main() {
       Pasteboard.copyString(result.text);
       const alert = new Alert();
       alert.title = result.title;
-      alert.message = `${result.body}\n\nСкопировано в буфер обмена.`;
+      alert.message = result.body;
       alert.addAction("Готово");
       await alert.presentAlert();
     }
@@ -164,24 +164,30 @@ function calculate(card, withdrawalThb, rates) {
   const totalDebit = baseInAccountCurrency + rshbCashFee;
   const cardName = card === "rub" ? "Рублёвая карта РСХБ" : "Юаневая карта РСХБ";
   const accountCurrency = fee.currency;
-  const lines = [
-    `Выдача: ${format(withdrawalThb, "THB")}`,
-    `Доплата тайского ATM: ${format(SETTINGS.THAI_ATM_FEE_THB, "THB")}`,
-    `Всего списывает ATM: ${format(totalThb, "THB")}`,
-    `UnionPay: 1 THB = ${formatRate(unionPay.thbCny)} CNY`,
-    `После UnionPay: ${format(settlementCny, "CNY")}`,
-  ];
-  if (card === "rub") lines.push(`Карточный курс РСХБ: 1 CNY = ${formatRate(rshb.sellCnyRub)} RUB`);
-  lines.push(
-    `Комиссия РСХБ: ${format(rshbCashFee, accountCurrency)} (${fee.percent * 100}%, мин. ${format(fee.minimum, accountCurrency)})`,
-    `ИТОГО СПИШЕТСЯ: ${format(totalDebit, accountCurrency)}`,
-    `Курс UnionPay: ${cacheLabel(rates.unionPay)} · РСХБ: ${cacheLabel(rates.rshb)}`
-  );
-  const title = `${cardName} · снятие THB`;
+  const convertedLine = card === "rub"
+    ? `💱 Курс РСХБ\n1 CNY = ${formatRate(rshb.sellCnyRub)} RUB\n\n💳 До комиссии\n${format(baseInAccountCurrency, "RUB")}\n\n`
+    : "";
+  const yesterdayWarning = unionPay.yesterday ? "⚠ Используется вчерашний курс UnionPay\n\n" : "";
+  const title = "🇹🇭 THB ATM RSHB";
+  const body =
+`${cardName}\n\n` +
+`${yesterdayWarning}` +
+`📅 ${formatCompactDate(unionPay.settlementDate)}\n\n` +
+`💱 1 CNY = ${formatRate(unionPay.cnyThb)} THB\n\n` +
+`────────────────────\n\n` +
+`💵 Получить\n${format(withdrawalThb, "THB")}\n\n` +
+`🏧 ATM\n${format(SETTINGS.THAI_ATM_FEE_THB, "THB")}\n\n` +
+`────────────────────\n\n` +
+`💰 Всего\n${format(totalThb, "THB")}\n\n` +
+`💳 UnionPay\n${format(settlementCny, "CNY")}\n\n` +
+convertedLine +
+`🏦 Комиссия РСХБ\n${format(rshbCashFee, accountCurrency)} (${fee.percent * 100}%, мин. ${format(fee.minimum, accountCurrency)})\n\n` +
+`════════════════════\n\n` +
+`💸 Итого\n${format(totalDebit, accountCurrency)}`;
   return {
     title: title,
-    body: lines.join("\n"),
-    text: `${title}\n${lines.join("\n")}`,
+    body: body,
+    text: `${title}\n${body}`,
     json: {
       cardCurrency: accountCurrency,
       withdrawalThb: withdrawalThb,
@@ -204,11 +210,12 @@ function buildWidget(result) {
   title.font = Font.semiboldSystemFont(13);
   title.textColor = Color.white();
   widget.addSpacer(7);
-  const total = widget.addText(result.body.split("\n").find((line) => line.startsWith("ИТОГО")) || "");
+  const bodyLines = result.body.split("\n");
+  const total = widget.addText(bodyLines.find((line) => line === "💸 Итого") ? bodyLines[bodyLines.length - 1] : "");
   total.font = Font.boldSystemFont(16);
   total.textColor = new Color("D5F2D4");
   widget.addSpacer(5);
-  const detail = widget.addText(result.body.split("\n").slice(0, 3).join(" · "));
+  const detail = widget.addText(result.body.split("\n").slice(0, 5).filter(Boolean).join(" · "));
   detail.font = Font.systemFont(9);
   detail.textColor = new Color("E7EEE8");
   return widget;
@@ -278,3 +285,7 @@ function toCompactDate(date) {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function formatCompactDate(value) {
+  const date = String(value || "");
+  return /^\d{8}$/.test(date) ? `${date.slice(6, 8)}.${date.slice(4, 6)}.${date.slice(0, 4)}` : date;
+}

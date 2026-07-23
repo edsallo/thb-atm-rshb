@@ -58,7 +58,7 @@ cny 30000 json
 
 ## Источники
 
-- [Дневные курсы UnionPay](https://www.unionpayintl.com/upload/jfimg/)
+- [Официальная страница проверки курсов UnionPay](https://www.unionpayintl.com/cardholderServ/serviceCenter/rate?language=en)
 - [Карточные курсы РСХБ](https://www.rshb.ru/natural/transfers/kurs-pokupki-prodazhi-dlya-operaciy-s-ispolzovaniem-platezhnyh-kart)
 
 Расчёт является ориентировочным: окончательная сумма зависит от курса на дату проведения операции, условий РСХБ и фактической доплаты конкретного банкомата Таиланда.

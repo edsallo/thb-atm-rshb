@@ -182,6 +182,8 @@ function calculate(card, withdrawalThb, rates) {
   const rshbCashFee = Math.max(baseInAccountCurrency * fee.percent, fee.minimum);
   const totalDebit = baseInAccountCurrency + rshbCashFee;
   const rublesToBuyCny = card === "cny" ? totalDebit * rshbApp.sellCnyRub : null;
+  const effectiveRubPerThb = (card === "rub" ? totalDebit : rublesToBuyCny) / withdrawalThb;
+  const effectiveRateLine = `1 бат = ${formatRate(effectiveRubPerThb)} рублей`;
   const cardName = card === "rub" ? "Рублёвая карта РСХБ" : "Юаневая карта РСХБ";
   const accountCurrency = fee.currency;
   const convertedLine = card === "rub"
@@ -207,7 +209,8 @@ convertedLine +
 `🏦 Комиссия РСХБ\n${format(rshbCashFee, accountCurrency)} (${fee.percent * 100}%, мин. ${format(fee.minimum, accountCurrency)})\n\n` +
 `════════════════════\n\n` +
 `💸 Итого\n${format(totalDebit, accountCurrency)}` +
-rubPurchaseLine;
+rubPurchaseLine +
+`\n\n💱 Итоговый курс\n${effectiveRateLine}`;
   return {
     title: title,
     body: body,
@@ -226,6 +229,7 @@ rubPurchaseLine;
         foreignCardCache: rates.rshbForeign.source,
         appRateCache: rates.rshbApp?.source || null,
       },
+      effectiveRubPerThb: effectiveRubPerThb,
       totalDebit: totalDebit,
       totalDebitCurrency: accountCurrency,
       generatedAt: new Date().toISOString(),
@@ -246,6 +250,10 @@ function buildWidget(result) {
   const total = widget.addText(totalIndex >= 0 ? bodyLines[totalIndex + 1] : "");
   total.font = Font.boldSystemFont(16);
   total.textColor = new Color("D5F2D4");
+  widget.addSpacer(5);
+  const effectiveRate = widget.addText(`1 бат = ${formatRate(result.json.effectiveRubPerThb)} рублей`);
+  effectiveRate.font = Font.systemFont(11);
+  effectiveRate.textColor = new Color("D5F2D4");
   widget.addSpacer(5);
   const detail = widget.addText(result.body.split("\n").slice(0, 5).filter(Boolean).join(" · "));
   detail.font = Font.systemFont(9);
